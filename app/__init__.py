@@ -1,0 +1,2 @@
+"""ModerBot application package."""
+

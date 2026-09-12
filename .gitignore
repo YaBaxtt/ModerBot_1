@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+*.db
+*.db-*
+backups/
+.huquqiy_template/
+*.docx
+*.pdf
+_docx_qa_render.ps1
