@@ -118,7 +118,7 @@ class ModerationResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f'<code>{target.id}</code>', result)
         self.assertIn('5 одинаковых сообщений', result)
 
-    async def test_history_without_target_shows_recent_manual_and_automatic_actions(self):
+    async def test_history_without_reply_shows_requesting_moderators_actions_only(self):
         moderator = telegram_user(10, 'Moderator', 'moderator_name')
         message = SimpleNamespace(
             from_user=moderator,
@@ -145,17 +145,19 @@ class ModerationResultTests(unittest.IsolatedAsyncioTestCase):
             await history(message, bot, session, config)
 
         result = message.answer.call_args.args[0]
-        self.assertIn('ИСТОРИЯ МОДЕРАЦИИ', result)
+        self.assertIn('ИСТОРИЯ МОДЕРАТОРА', result)
+        self.assertIn('@moderator_name', result)
         self.assertIn('Варн', result)
-        self.assertIn('Мут', result)
-        self.assertIn('автоматика бота', result)
+        self.assertNotIn('Мут', result)
+        self.assertNotIn('автоматика бота', result)
         self.assertIn('@spam_name', result)
 
-    async def test_history_reply_to_own_message_does_not_select_the_moderator(self):
-        moderator = telegram_user(10, 'Moderator', 'moderator_name')
+    async def test_history_reply_selects_that_moderators_actions(self):
+        requester = telegram_user(10, 'Requester', 'requester_name')
+        selected = telegram_user(11, 'Selected moderator', 'selected_mod')
         message = SimpleNamespace(
-            from_user=moderator,
-            reply_to_message=SimpleNamespace(from_user=moderator),
+            from_user=requester,
+            reply_to_message=SimpleNamespace(from_user=selected),
             chat=telegram_chat(),
             text='/history',
             answer=AsyncMock(),
@@ -165,18 +167,21 @@ class ModerationResultTests(unittest.IsolatedAsyncioTestCase):
 
         async with self.factory() as session:
             chat = Chat(telegram_id=message.chat.id, title=message.chat.title, username=message.chat.username)
-            db_moderator = User(telegram_id=moderator.id, first_name=moderator.first_name, username=moderator.username)
+            db_requester = User(telegram_id=requester.id, first_name=requester.first_name, username=requester.username)
+            db_selected = User(telegram_id=selected.id, first_name=selected.first_name, username=selected.username)
             target = User(telegram_id=20, first_name='Spammer', username='spam_name')
-            session.add_all([chat, db_moderator, target])
+            session.add_all([chat, db_requester, db_selected, target])
             await session.flush()
             session.add_all([
-                ChatModerator(chat_id=chat.id, user_id=db_moderator.id, is_active=True),
-                ModerationAction(chat_id=chat.id, target_user_id=target.id, moderator_user_id=db_moderator.id, action=ModerationActionType.MUTE, reason='test'),
+                ChatModerator(chat_id=chat.id, user_id=db_requester.id, is_active=True),
+                ChatModerator(chat_id=chat.id, user_id=db_selected.id, is_active=True),
+                ModerationAction(chat_id=chat.id, target_user_id=target.id, moderator_user_id=db_selected.id, action=ModerationActionType.MUTE, reason='test'),
             ])
             await session.commit()
             await history(message, bot, session, config)
 
         result = message.answer.call_args.args[0]
-        self.assertIn('Группа: <b>Test group</b>', result)
+        self.assertIn('Модератор:', result)
+        self.assertIn('@selected_mod', result)
+        self.assertNotIn('@requester_name', result)
         self.assertIn('@spam_name', result)
-        self.assertNotIn('Пользователь: <a href="tg://user?id=10"', result)

@@ -180,32 +180,27 @@ async def unwarn(message: Message, bot: Bot, session: AsyncSession, config: Sett
 @router.message(Command("history"))
 async def history(message: Message, bot: Bot, session: AsyncSession, config: Settings) -> None:
     if not await allowed(message, bot, session, config): return
+    chat, requester = await command_context(message, session)
     arguments = message.text.split()[1:]
-    target = None
+    selected_moderator = requester
     reply_user = message.reply_to_message.from_user if message.reply_to_message else None
-    # A common Telegram workflow is to reply to the bot's result card or to
-    # the moderator's own follow-up.  Neither is the punished user, so in that
-    # case show the group journal instead of a misleading empty personal one.
-    reply_is_result_or_self = bool(
-        reply_user
-        and not arguments
-        and (getattr(reply_user, 'is_bot', False) or reply_user.id == message.from_user.id)
-    )
-    if (message.reply_to_message and not reply_is_result_or_self) or arguments:
-        target, _ = await target_from_command(message, session, arguments)
-        if not target:
-            await message.answer('Пользователь не найден. Ответьте на его сообщение либо укажите известный @username / ID.')
+    if arguments:
+        selected_moderator = await find_user(session, arguments[0])
+        if not selected_moderator:
+            await message.answer('Модератор не найден. Ответьте на его сообщение либо укажите известный @username / ID.')
             return
-    chat, _ = await command_context(message, session)
-    query = select(ModerationAction).where(ModerationAction.chat_id == chat.id)
-    if target:
-        query = query.where(ModerationAction.target_user_id == target.id)
+    elif reply_user and not getattr(reply_user, 'is_bot', False):
+        selected_moderator = await upsert_user(session, reply_user)
+
+    query = select(ModerationAction).where(
+        ModerationAction.chat_id == chat.id,
+        ModerationAction.moderator_user_id == selected_moderator.id,
+    )
     actions = (await session.scalars(query.order_by(desc(ModerationAction.created_at), desc(ModerationAction.id)).limit(10))).all()
 
     entries = []
     for action in actions:
         action_target = await session.get(User, action.target_user_id) if action.target_user_id else None
-        action_moderator = await session.get(User, action.moderator_user_id) if action.moderator_user_id else None
         action_key = action.action.value if hasattr(action.action, 'value') else str(action.action)
         created_at = action.created_at
         if created_at.tzinfo is None:
@@ -213,13 +208,13 @@ async def history(message: Message, bot: Bot, session: AsyncSession, config: Set
         entries.append(
             f'<b>{ACTION_LABELS.get(action_key, escape(action_key))}</b> · <code>{created_at.astimezone().strftime("%d.%m.%Y %H:%M")}</code>\n'
             f'👤 {user_label(action_target) if action_target else "пользователь удалён"}\n'
-            f'🛡 {user_label(action_moderator) if action_moderator else "автоматика бота"}\n'
             f'📝 {escape(action.reason or "без причины")}'
         )
-    scope = f'Пользователь: {user_label(target)}' if target else f'Группа: <b>{escape(chat.title)}</b>'
     text = (
-        f'📋 <b>ИСТОРИЯ МОДЕРАЦИИ</b>\n━━━━━━━━━━━━\n\n{scope}\n\n'
-        + ('\n\n'.join(entries) if entries else '<i>Действий пока нет.</i>')
-        + '\n\n<i>Показаны последние 10 действий. Для одного участника ответьте на его сообщение или используйте /history @username.</i>'
+        f'📋 <b>ИСТОРИЯ МОДЕРАТОРА</b>\n━━━━━━━━━━━━\n\n'
+        f'🛡 Модератор: {user_label(selected_moderator)}\n'
+        f'💬 Группа: <b>{escape(chat.title)}</b>\n\n'
+        + ('\n\n'.join(entries) if entries else '<i>Этот модератор пока не совершал действий.</i>')
+        + '\n\n<i>Показаны последние 10 действий этого модератора. Чтобы проверить другого, ответьте /history на его сообщение или используйте /history @username.</i>'
     )
     await message.answer(text)
