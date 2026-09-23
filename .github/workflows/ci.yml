@@ -48,6 +48,7 @@ jobs:
       - name: Run test suite
         shell: bash
         run: |
+          set +e
           set -o pipefail
           python -m pytest -q --tb=short 2>&1 | tee pytest-output.txt
           status=${PIPESTATUS[0]}
