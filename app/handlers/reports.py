@@ -17,6 +17,7 @@ from app.database.models import Chat, ChatModerator, PrivateReport, Report, Repo
 from app.services.text import user_label
 from app.services.users import upsert_chat, upsert_user
 from app.keyboards.common import back_button
+from app.services.moderators import active_assignment
 
 router = Router(name="reports")
 log = logging.getLogger(__name__)
@@ -30,6 +31,16 @@ async def private_feedback(message, bot, text):
             await bot.send_message(message.from_user.id, text, reply_markup=back_button())
         except TelegramAPIError:
             log.info('Private report feedback unavailable')
+
+
+async def report_moderators(session: AsyncSession, chat_id: int) -> list[User]:
+    """Return only explicitly appointed, active moderators of this chat."""
+    return list((await session.scalars(
+        select(User)
+        .join(ChatModerator, ChatModerator.user_id == User.id)
+        .where(ChatModerator.chat_id == chat_id, ChatModerator.is_active.is_(True))
+        .order_by(ChatModerator.granted_at)
+    )).all())
 
 
 @router.message(Command("report"), F.chat.type.in_({"group", "supergroup"}))
@@ -76,20 +87,36 @@ async def report(message: Message, bot: Bot, session: AsyncSession, config: Sett
     markup = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Рассмотрено", callback_data=f"report:review:{item.id}", style=ButtonStyle.SUCCESS),
         InlineKeyboardButton(text="❌ Закрыть", callback_data=f"report:close:{item.id}"),
-    ], [InlineKeyboardButton(text='⬅️ В меню', callback_data='admin:home')]])
+    ], [InlineKeyboardButton(text='🛡 В модераторскую', callback_data=f'moder:chat:{chat.id}')]])
     text = f"🚨 <b>Новая жалоба #{item.id}</b>\n\nОт кого: {user_label(message.from_user)}\nНа кого: {user_label(message.reply_to_message.from_user)}\nЧат: {escape(chat.title)}\nПричина: {escape(reason)}\nСообщение: {link}"
-    for owner_id in config.owner_ids:
-        try: await bot.send_message(owner_id, text, reply_markup=markup)
-        except TelegramAPIError: log.warning('Could not notify owner about report %s', item.id)
-    await private_feedback(message, bot, f"✅ Жалоба #{item.id} сохранена на рассмотрение. В общий чат подтверждение не отправляется.")
+    delivered = 0
+    moderators = await report_moderators(session, chat.id)
+    for moderator in moderators:
+        try:
+            await bot.send_message(moderator.telegram_id, text, reply_markup=markup)
+            delivered += 1
+        except TelegramAPIError:
+            # Telegram forbids a bot from initiating a private conversation.
+            # The assignment stays valid; the moderator only needs to press
+            # /start once before future reports can be delivered.
+            log.warning('Could not notify moderator %s about report %s', moderator.telegram_id, item.id)
+    if delivered:
+        result = f'✅ Жалоба #{item.id} сохранена и отправлена модераторам: <b>{delivered}</b>. В общий чат подтверждение не отправляется.'
+    elif moderators:
+        result = f'⚠️ Жалоба #{item.id} сохранена, но Telegram не разрешил доставить её модераторам в личку. Модераторам нужно один раз открыть бота и нажать /start.'
+    else:
+        result = f'⚠️ Жалоба #{item.id} сохранена, но у этой группы пока нет назначенных модераторов. Владелец группы может добавить их в разделе «Модераторская».'
+    await private_feedback(message, bot, result)
 
 
 @router.callback_query(F.data.startswith("report:review:") | F.data.startswith("report:close:"))
 async def review_report(callback: CallbackQuery, session: AsyncSession, config: Settings) -> None:
-    if not config.is_owner(callback.from_user.id): await callback.answer("Нет доступа", show_alert=True); return
     _, status, raw_id = callback.data.split(":")
     report_row = await session.get(Report, int(raw_id), with_for_update=True)
     if not report_row or report_row.status != ReportStatus.OPEN: await callback.answer("Уже обработано", show_alert=True); return
+    if not config.is_owner(callback.from_user.id) and not await active_assignment(session, report_row.chat_id, callback.from_user.id):
+        await callback.answer('Эту жалобу может обработать только назначенный модератор этой группы.', show_alert=True)
+        return
     report_row.status = ReportStatus.REVIEWED if status == "review" else ReportStatus.CLOSED
     report_row.reviewed_at = datetime.now(timezone.utc)
     reviewer = await upsert_user(session, callback.from_user)

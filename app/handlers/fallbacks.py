@@ -8,8 +8,8 @@ from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.handlers.common import MAIN_MENU_TEXT, menu_links, user_feature_states
-from app.keyboards.common import admin_menu, main_menu
+from app.handlers.common import MAIN_MENU_TEXT, private_main_markup
+from app.keyboards.common import admin_menu
 
 
 router = Router(name='fallbacks')
@@ -27,11 +27,8 @@ async def stale_private_button(callback: CallbackQuery, state: FSMContext, sessi
     if config.is_owner(callback.from_user.id) and owner_flow:
         text, markup = '👑 <b>СУПЕР-АДМИНКА</b>\n\nГлобальное управление ботом.', admin_menu()
     else:
-        me = await callback.bot.get_me()
-        group_url, channel_url = await menu_links(session, config)
-        features = await user_feature_states(session)
         text = MAIN_MENU_TEXT
-        markup = main_menu(config.is_owner(callback.from_user.id), bot_username=me.username, group_url=group_url, channel_url=channel_url, features=features)
+        markup = await private_main_markup(session, callback.bot, config, callback.from_user.id)
     try:
         if callback.message.text:
             await callback.message.edit_text(text, reply_markup=markup)

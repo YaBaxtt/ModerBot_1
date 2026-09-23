@@ -19,10 +19,10 @@ from aiogram.types import Message, Update, User as TelegramUser
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, Chat, PrivateReport, Report, Setting
+from app.database.models import Base, Chat, ChatModerator, PrivateReport, Report, ReportStatus, Setting, User
 from app.handlers.announcements import publish_announcement
 from app.handlers.private_reports import deliver_private_report, evidence
-from app.handlers.reports import report as group_report
+from app.handlers.reports import report as group_report, review_report
 from app.handlers.verification import send_private_welcome, question_keyboard
 from app.middlewares.database import DatabaseMiddleware
 from app.middlewares.navigation import NavigationMiddleware
@@ -283,16 +283,60 @@ class PrivateWorkflows(unittest.IsolatedAsyncioTestCase):
         raw['reply_to_message'] = {**raw, 'message_id': 1, 'text': 'spam', 'from_user': {'id': 222, 'is_bot': False, 'first_name': 'Target'}}
         message = Message.model_validate(raw).as_(bot)
         async with self.factory() as db:
+            chat = Chat(telegram_id=-100, title='Group')
+            moderator = User(telegram_id=333, first_name='Moderator')
+            db.add_all([chat, moderator])
+            await db.flush()
+            db.add(ChatModerator(chat_id=chat.id, user_id=moderator.id, is_active=True))
+            await db.commit()
             await group_report(message, bot, db, SimpleNamespace(owner_ids=(999,)))
             self.assertEqual(await db.scalar(select(func.count(Report.id))), 1)
         self.assertEqual(api.calls[0].__api_method__, 'deleteMessage')
         group_messages = [m for m in api.calls if m.__api_method__ == 'sendMessage' and m.chat_id == -100]
         self.assertEqual(len(group_messages), 1)
         self.assertEqual(group_messages[0].ephemeral_message_parameters.receiver_user_id, 111)
-        owner_text = next(m.text for m in api.calls if m.__api_method__ == 'sendMessage' and m.chat_id == 999)
-        self.assertIn('SECRET_REPORTER', owner_text)
-        self.assertIn('tg://user?id=111', owner_text)
+        moderator_text = next(m.text for m in api.calls if m.__api_method__ == 'sendMessage' and m.chat_id == 333)
+        self.assertIn('SECRET_REPORTER', moderator_text)
+        self.assertIn('tg://user?id=111', moderator_text)
+        self.assertFalse(any(m.__api_method__ == 'sendMessage' and m.chat_id == 999 for m in api.calls))
         await bot.session.close()
+
+    async def test_only_assigned_group_moderator_can_process_group_report(self):
+        async with self.factory() as db:
+            chat = Chat(telegram_id=-100, title='Group')
+            moderator = User(telegram_id=333, first_name='Moderator')
+            reporter = User(telegram_id=111, first_name='Reporter')
+            target = User(telegram_id=222, first_name='Target')
+            db.add_all([chat, moderator, reporter, target])
+            await db.flush()
+            db.add(ChatModerator(chat_id=chat.id, user_id=moderator.id, is_active=True))
+            row = Report(chat_id=chat.id, reporter_user_id=reporter.id, target_user_id=target.id, reason='spam')
+            db.add(row)
+            await db.commit()
+
+            denied = SimpleNamespace(
+                data=f'report:review:{row.id}',
+                from_user=SimpleNamespace(id=444, username=None, first_name='Outsider', last_name=None),
+                answer=AsyncMock(),
+                message=SimpleNamespace(edit_reply_markup=AsyncMock()),
+            )
+            config = SimpleNamespace(is_owner=lambda _: False)
+            await review_report(denied, db, config)
+            self.assertEqual(row.status, ReportStatus.OPEN)
+            denied.answer.assert_awaited_once_with(
+                'Эту жалобу может обработать только назначенный модератор этой группы.',
+                show_alert=True,
+            )
+
+            allowed = SimpleNamespace(
+                data=f'report:review:{row.id}',
+                from_user=SimpleNamespace(id=333, username=None, first_name='Moderator', last_name=None),
+                answer=AsyncMock(),
+                message=SimpleNamespace(edit_reply_markup=AsyncMock()),
+            )
+            await review_report(allowed, db, config)
+            self.assertEqual(row.status, ReportStatus.REVIEWED)
+            self.assertEqual(row.reviewed_by_user_id, moderator.id)
 
     async def test_failed_group_command_deletion_warns_privately(self):
         class CannotDelete(RecordingSession):

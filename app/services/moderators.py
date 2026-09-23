@@ -41,6 +41,50 @@ async def can_moderate_chat(bot, session: AsyncSession, chat: Chat, user_telegra
     return role not in {None, 'left', 'kicked'}
 
 
+async def chat_accesses(
+    session: AsyncSession,
+    bot,
+    user_telegram_id: int,
+    config: Settings,
+) -> list[tuple[Chat, bool]]:
+    """Return active chats the user owns or moderates.
+
+    The boolean is true only for users allowed to change group settings.  This
+    single source of truth is also used to decide which private-menu buttons
+    are visible, so an ordinary user never receives dead administration
+    controls.
+    """
+    chats = (
+        await session.scalars(
+            select(Chat).where(Chat.is_active.is_(True)).order_by(Chat.title).limit(100)
+        )
+    ).all()
+    if config.is_owner(user_telegram_id):
+        return [(chat, True) for chat in chats]
+
+    db_user = await session.scalar(select(User).where(User.telegram_id == user_telegram_id))
+    assigned_chat_ids: set[int] = set()
+    if db_user:
+        assigned_chat_ids = set(
+            (
+                await session.scalars(
+                    select(ChatModerator.chat_id).where(
+                        ChatModerator.user_id == db_user.id,
+                        ChatModerator.is_active.is_(True),
+                    )
+                )
+            ).all()
+        )
+
+    result: list[tuple[Chat, bool]] = []
+    for chat in chats:
+        role = await telegram_role(bot, chat.telegram_id, user_telegram_id)
+        managed = role == 'creator'
+        if managed or (chat.id in assigned_chat_ids and role not in {None, 'left', 'kicked'}):
+            result.append((chat, managed))
+    return result
+
+
 async def set_moderator(session: AsyncSession, *, chat_id: int, user_id: int, granted_by_user_id: int) -> ChatModerator:
     row = await session.scalar(select(ChatModerator).where(ChatModerator.chat_id == chat_id, ChatModerator.user_id == user_id))
     now = datetime.now(timezone.utc)

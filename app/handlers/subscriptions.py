@@ -296,14 +296,10 @@ async def check_subscription(callback: CallbackQuery, session: AsyncSession, bot
         except TelegramAPIError:
             pass
         return
-    from app.handlers.common import MAIN_MENU_TEXT, menu_links, user_feature_states
-    from app.keyboards.common import main_menu
-    me = await bot.get_me()
-    group_url, channel_url = await menu_links(session, config)
-    features = await user_feature_states(session)
+    from app.handlers.common import MAIN_MENU_TEXT, private_main_markup
     await callback.message.edit_text(
         MAIN_MENU_TEXT,
-        reply_markup=main_menu(config.is_owner(callback.from_user.id), bot_username=me.username, group_url=group_url, channel_url=channel_url, features=features),
+        reply_markup=await private_main_markup(session, bot, config, callback.from_user.id),
     )
 
 

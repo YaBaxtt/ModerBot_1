@@ -180,9 +180,37 @@ async def unwarn(message: Message, bot: Bot, session: AsyncSession, config: Sett
 @router.message(Command("history"))
 async def history(message: Message, bot: Bot, session: AsyncSession, config: Settings) -> None:
     if not await allowed(message, bot, session, config): return
-    target, _ = await target_from_command(message, session, message.text.split()[1:])
-    if not target: await message.answer("Ответьте на сообщение пользователя или укажите ID / @username."); return
+    arguments = message.text.split()[1:]
+    target = None
+    if message.reply_to_message or arguments:
+        target, _ = await target_from_command(message, session, arguments)
+        if not target:
+            await message.answer('Пользователь не найден. Ответьте на его сообщение либо укажите известный @username / ID.')
+            return
     chat, _ = await command_context(message, session)
-    actions = (await session.scalars(select(ModerationAction).where(ModerationAction.chat_id == chat.id, ModerationAction.target_user_id == target.id).order_by(desc(ModerationAction.created_at)).limit(5))).all()
-    text = f"📋 <b>ИСТОРИЯ МОДЕРАЦИИ</b>\n━━━━━━━━━━━━\n\n👤 Пользователь: {user_label(target)}\n\n" + ("\n".join(f"• {ACTION_LABELS.get(str(action.action), str(action.action))} — {escape(action.reason or 'без причины')}" for action in actions) if actions else "<i>Действий пока нет.</i>")
+    query = select(ModerationAction).where(ModerationAction.chat_id == chat.id)
+    if target:
+        query = query.where(ModerationAction.target_user_id == target.id)
+    actions = (await session.scalars(query.order_by(desc(ModerationAction.created_at), desc(ModerationAction.id)).limit(10))).all()
+
+    entries = []
+    for action in actions:
+        action_target = await session.get(User, action.target_user_id) if action.target_user_id else None
+        action_moderator = await session.get(User, action.moderator_user_id) if action.moderator_user_id else None
+        action_key = action.action.value if hasattr(action.action, 'value') else str(action.action)
+        created_at = action.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        entries.append(
+            f'<b>{ACTION_LABELS.get(action_key, escape(action_key))}</b> · <code>{created_at.astimezone().strftime("%d.%m.%Y %H:%M")}</code>\n'
+            f'👤 {user_label(action_target) if action_target else "пользователь удалён"}\n'
+            f'🛡 {user_label(action_moderator) if action_moderator else "автоматика бота"}\n'
+            f'📝 {escape(action.reason or "без причины")}'
+        )
+    scope = f'Пользователь: {user_label(target)}' if target else f'Группа: <b>{escape(chat.title)}</b>'
+    text = (
+        f'📋 <b>ИСТОРИЯ МОДЕРАЦИИ</b>\n━━━━━━━━━━━━\n\n{scope}\n\n'
+        + ('\n\n'.join(entries) if entries else '<i>Действий пока нет.</i>')
+        + '\n\n<i>Показаны последние 10 действий. Для истории одного участника ответьте на его сообщение командой /history.</i>'
+    )
     await message.answer(text)

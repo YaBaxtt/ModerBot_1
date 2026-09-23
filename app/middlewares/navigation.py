@@ -29,7 +29,18 @@ class NavigationMiddleware(BaseMiddleware):
                     return await handler(update, data)
                 if state:
                     await state.clear()
-                markup = admin_menu() if config.is_owner(message.from_user.id) else main_menu()
+                if config.is_owner(message.from_user.id):
+                    markup = admin_menu()
+                else:
+                    session_factory = data.get('session_factory')
+                    if session_factory:
+                        from app.handlers.common import private_main_markup
+                        async with session_factory() as menu_session:
+                            markup = await private_main_markup(menu_session, data['bot'], config, message.from_user.id)
+                    else:
+                        # Safe fallback for isolated middleware use: do not expose
+                        # administration buttons without a verified group access.
+                        markup = main_menu(has_group_settings=False, has_moderator_access=False)
                 await message.answer("Действие отменено.", reply_markup=markup)
                 return
             if command in {"/start", "/admin", "/moder", "/report", "/help", "/me", "/profile", "/shop", "/top", "/rules"} and own_command and state:

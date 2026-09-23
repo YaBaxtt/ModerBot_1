@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.database.models import Chat, ChatModerator, MemberProfileSnapshot, ModerationAction, User, UserChatStats
 from app.keyboards.common import back_button
-from app.services.moderators import active_assignment, can_manage_chat, revoke_moderator, set_moderator, telegram_role
+from app.services.moderators import active_assignment, can_manage_chat, chat_accesses, revoke_moderator, set_moderator, telegram_role
 from app.services.text import user_label
 from app.services.users import find_user, upsert_chat, upsert_user
 
@@ -58,23 +58,6 @@ async def remember_bot_chat(event: ChatMemberUpdated, session: AsyncSession) -> 
             chat.is_active = False
         return
     await upsert_chat(session, event.chat)
-
-
-async def chat_accesses(session: AsyncSession, bot: Bot, telegram_user_id: int, config: Settings) -> list[tuple[Chat, bool]]:
-    chats = (await session.scalars(select(Chat).where(Chat.is_active.is_(True)).order_by(Chat.title).limit(100))).all()
-    if config.is_owner(telegram_user_id):
-        return [(chat, True) for chat in chats]
-    db_user = await session.scalar(select(User).where(User.telegram_id == telegram_user_id))
-    assigned_chat_ids = set()
-    if db_user:
-        assigned_chat_ids = set((await session.scalars(select(ChatModerator.chat_id).where(ChatModerator.user_id == db_user.id, ChatModerator.is_active.is_(True)))).all())
-    result = []
-    for chat in chats:
-        role = await telegram_role(bot, chat.telegram_id, telegram_user_id)
-        managed = role == 'creator'
-        if managed or (chat.id in assigned_chat_ids and role not in {None, 'left', 'kicked'}):
-            result.append((chat, managed))
-    return result
 
 
 async def authorize_chat(callback: CallbackQuery, session: AsyncSession, bot: Bot, config: Settings, chat_id: int, *, manage: bool = False) -> Chat | None:

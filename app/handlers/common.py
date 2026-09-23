@@ -17,7 +17,7 @@ from app.services.profile import level_for_points, level_progress
 from app.services.features import feature_states
 from app.services.premium import chat_has_pro
 from app.services.protections import GROUP_CONTROLS, protection_states
-from app.services.moderators import can_manage_chat
+from app.services.moderators import can_manage_chat, chat_accesses
 
 DEFAULT_RULES = "Соблюдайте уважение к участникам сообщества, не флудите и не публикуйте рекламу без согласования с администрацией."
 
@@ -58,13 +58,32 @@ async def user_feature_states(session: AsyncSession) -> dict[str, bool]:
     return states
 
 
+async def private_main_markup(
+    session: AsyncSession,
+    bot: Bot,
+    config: Settings,
+    user_id: int,
+) -> InlineKeyboardMarkup:
+    """Build the private menu from the user's real group access."""
+    me = await bot.get_me()
+    group_url, channel_url = await menu_links(session, config)
+    features = await user_feature_states(session)
+    accesses = await chat_accesses(session, bot, user_id, config)
+    return main_menu(
+        config.is_owner(user_id),
+        bot_username=me.username,
+        group_url=group_url,
+        channel_url=channel_url,
+        features=features,
+        has_group_settings=any(managed for _, managed in accesses),
+        has_moderator_access=bool(accesses),
+    )
+
+
 @router.message(CommandStart(), F.chat.type == "private")
 async def start(message: Message, session: AsyncSession, config: Settings) -> None:
     await upsert_user(session, message.from_user)
-    me = await message.bot.get_me()
-    group_url, channel_url = await menu_links(session, config)
-    features = await user_feature_states(session)
-    await message.answer(MAIN_MENU_TEXT, reply_markup=main_menu(config.is_owner(message.from_user.id), bot_username=me.username, group_url=group_url, channel_url=channel_url, features=features))
+    await message.answer(MAIN_MENU_TEXT, reply_markup=await private_main_markup(session, message.bot, config, message.from_user.id))
 
 
 @router.message(CommandStart(), F.chat.type.in_({"group", "supergroup"}))
@@ -85,10 +104,7 @@ async def group_help(message: Message) -> None:
 @router.callback_query(F.data.in_({"menu:home", "nav:private_main"}), F.message.chat.type == "private")
 async def menu_home(callback: CallbackQuery, config: Settings, bot: Bot, session: AsyncSession) -> None:
     await callback.answer()
-    me = await bot.get_me()
-    group_url, channel_url = await menu_links(session, config)
-    features = await user_feature_states(session)
-    markup = main_menu(config.is_owner(callback.from_user.id), bot_username=me.username, group_url=group_url, channel_url=channel_url, features=features)
+    markup = await private_main_markup(session, bot, config, callback.from_user.id)
     if callback.message.text:
         await callback.message.edit_text(MAIN_MENU_TEXT, reply_markup=markup)
     else:
@@ -104,7 +120,14 @@ async def add_bot(callback: CallbackQuery, bot: Bot) -> None:
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='nav:private_main')],
     ])
     await callback.answer()
-    await callback.message.edit_text('➕ <b>Добавить бота в группу</b>\n\nВыберите группу, затем назначьте бота администратором. Для антиспама, жалоб и проверки новичков нужны права удаления и ограничения участников; для объявлений — право закрепления.', reply_markup=markup)
+    await callback.message.edit_text(
+        '➕ <b>ДОБАВИТЬ БОТА В НОВУЮ ГРУППУ</b>\n\n'
+        'Нажмите «Выбрать группу», если подключаете ещё одну группу. После добавления назначьте бота администратором.\n\n'
+        '<b>Бот уже в вашей группе?</b> Вернитесь назад и откройте «⚙️ Настройки группы». '
+        'Простого присутствия в чате недостаточно: для антиспама и жалоб нужны права удаления сообщений, '
+        'для мутов и проверки новичков — ограничение участников, для объявлений — закрепление сообщений.',
+        reply_markup=markup,
+    )
 
 
 @router.callback_query(F.data == 'menu:info', F.message.chat.type == 'private')
@@ -134,11 +157,8 @@ async def bot_info(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == 'menu:support', F.message.chat.type == 'private')
 async def removed_support(callback: CallbackQuery, bot: Bot, session: AsyncSession, config: Settings) -> None:
     """Gracefully replace keyboards sent before the Support button was removed."""
-    me = await bot.get_me()
-    group_url, channel_url = await menu_links(session, config)
-    features = await user_feature_states(session)
     await callback.answer('Раздел поддержки убран')
-    await callback.message.edit_text(MAIN_MENU_TEXT, reply_markup=main_menu(config.is_owner(callback.from_user.id), bot_username=me.username, group_url=group_url, channel_url=channel_url, features=features))
+    await callback.message.edit_text(MAIN_MENU_TEXT, reply_markup=await private_main_markup(session, bot, config, callback.from_user.id))
 
 
 @router.callback_query(F.data.in_({'menu:group', 'menu:channel'}), F.message.chat.type == 'private')
@@ -224,6 +244,7 @@ async def group_settings_detail(callback: CallbackQuery, session: AsyncSession, 
         )
         return
     creator = bot_member.status == 'creator'
+    administrator = creator or bot_member.status == 'administrator'
     delete = creator or bool(getattr(bot_member, 'can_delete_messages', False))
     restrict = creator or bool(getattr(bot_member, 'can_restrict_members', False))
     pin = creator or bool(getattr(bot_member, 'can_pin_messages', False))
@@ -235,6 +256,9 @@ async def group_settings_detail(callback: CallbackQuery, session: AsyncSession, 
 
 💬 Группа: <b>{escape(chat.title)}</b>
 {pro_badge}
+🤖 Роль бота: <b>{"администратор" if administrator else "обычный участник"}</b>
+
+{'' if administrator else '<blockquote>⚠️ Бот подключён к группе, но не назначен администратором. Поэтому настройки видны, а действия модерации выполнять нельзя.</blockquote>'}
 
 <b>БАЗОВАЯ ЗАЩИТА</b>
 {"✅" if delete else "❌"} Антиспам и удаление сообщений

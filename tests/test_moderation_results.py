@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, ModerationAction, ModerationActionType, Warning
+from app.database.models import Base, Chat, ChatModerator, ModerationAction, ModerationActionType, User, Warning
 from app.handlers.activity import activity
-from app.handlers.moderation import warn
+from app.handlers.moderation import history, warn
 from app.services.antispam import SpamDecision
 
 
@@ -117,3 +117,36 @@ class ModerationResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('@flood_name', result)
         self.assertIn(f'<code>{target.id}</code>', result)
         self.assertIn('5 одинаковых сообщений', result)
+
+    async def test_history_without_target_shows_recent_manual_and_automatic_actions(self):
+        moderator = telegram_user(10, 'Moderator', 'moderator_name')
+        message = SimpleNamespace(
+            from_user=moderator,
+            reply_to_message=None,
+            chat=telegram_chat(),
+            text='/history',
+            answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member')))
+        config = SimpleNamespace(is_owner=lambda _: False)
+
+        async with self.factory() as session:
+            chat = Chat(telegram_id=message.chat.id, title=message.chat.title, username=message.chat.username)
+            db_moderator = User(telegram_id=moderator.id, first_name=moderator.first_name, username=moderator.username)
+            target = User(telegram_id=20, first_name='Spammer', username='spam_name')
+            session.add_all([chat, db_moderator, target])
+            await session.flush()
+            session.add_all([
+                ChatModerator(chat_id=chat.id, user_id=db_moderator.id, is_active=True),
+                ModerationAction(chat_id=chat.id, target_user_id=target.id, moderator_user_id=db_moderator.id, action=ModerationActionType.WARN, reason='оскорбления'),
+                ModerationAction(chat_id=chat.id, target_user_id=target.id, moderator_user_id=None, action=ModerationActionType.MUTE, reason='Автоматически: спам'),
+            ])
+            await session.commit()
+            await history(message, bot, session, config)
+
+        result = message.answer.call_args.args[0]
+        self.assertIn('ИСТОРИЯ МОДЕРАЦИИ', result)
+        self.assertIn('Варн', result)
+        self.assertIn('Мут', result)
+        self.assertIn('автоматика бота', result)
+        self.assertIn('@spam_name', result)

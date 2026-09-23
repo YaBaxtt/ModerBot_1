@@ -65,6 +65,21 @@ class CoreTests(unittest.TestCase):
         admin_buttons = [button for row in admin_menu().inline_keyboard for button in row]
         self.assertEqual(sum(button.style == 'success' for button in admin_buttons), 3)
         self.assertFalse(any(button.style in {'primary', 'danger'} for button in admin_buttons))
+
+    def test_group_controls_are_hidden_without_verified_access(self):
+        buttons = [
+            button
+            for row in main_menu(
+                bot_username='moder_bot',
+                has_group_settings=False,
+                has_moderator_access=False,
+            ).inline_keyboard
+            for button in row
+        ]
+        callbacks = {button.callback_data for button in buttons if button.callback_data}
+        self.assertNotIn('menu:group_settings', callbacks)
+        self.assertNotIn('moder:home', callbacks)
+        self.assertEqual(buttons[0].url, 'https://t.me/moder_bot?startgroup=true')
     def test_duration_parser(self) -> None:
         self.assertEqual(parse_duration("10m").total_seconds(), 600)
         self.assertEqual(parse_duration("7d").days, 7)
