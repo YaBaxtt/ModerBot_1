@@ -160,6 +160,7 @@ class PrivateWorkflows(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_dispatcher_report_media_cancel_back_and_owner_review(self):
         from app.handlers.private_reports import router
+        from app.handlers.reports import router as group_reports_router
         from app.handlers.common import router as common_router
         from app.handlers.advertising import router as ads_router
         session = RecordingSession()
@@ -169,7 +170,7 @@ class PrivateWorkflows(unittest.IsolatedAsyncioTestCase):
         dp['config'] = SimpleNamespace(owner_ids=(999,), is_owner=lambda uid: uid == 999)
         dp.update.outer_middleware(NavigationMiddleware())
         dp.update.outer_middleware(DatabaseMiddleware(self.factory))
-        dp.include_routers(common_router, router, ads_router)
+        dp.include_routers(common_router, router, group_reports_router, ads_router)
         seq = 0
 
         async def send(text=None, callback=None, uid=111, **media):
@@ -232,6 +233,34 @@ class PrivateWorkflows(unittest.IsolatedAsyncioTestCase):
             await send(callback='ads:send')
             ad_final = next(m for m in session.calls if 'Мы свяжемся с вами здесь' in (getattr(m, 'text', '') or ''))
             self.assertEqual(ad_final.reply_markup.inline_keyboard[-1][0].callback_data, 'nav:private_main')
+
+            # Real router order must not let the private /report workflow
+            # swallow a group complaint before it reaches the group handler.
+            async with self.factory() as db:
+                chat = Chat(telegram_id=-100, title='Group')
+                moderator = User(telegram_id=333, first_name='Moderator')
+                db.add_all([chat, moderator])
+                await db.flush()
+                db.add(ChatModerator(chat_id=chat.id, user_id=moderator.id, is_active=True))
+                await db.commit()
+            seq += 1
+            group_message = {
+                'message_id': seq,
+                'date': datetime.now(timezone.utc),
+                'chat': {'id': -100, 'type': 'supergroup', 'title': 'Group'},
+                'from_user': {'id': 111, 'is_bot': False, 'first_name': 'Reporter'},
+                'text': '/report флуд',
+                'reply_to_message': {
+                    'message_id': seq - 1,
+                    'date': datetime.now(timezone.utc),
+                    'chat': {'id': -100, 'type': 'supergroup', 'title': 'Group'},
+                    'from_user': {'id': 222, 'is_bot': False, 'first_name': 'Target'},
+                    'text': 'spam',
+                },
+            }
+            await dp.feed_update(bot, Update(update_id=seq, message=group_message))
+            delivered = [m for m in session.calls if getattr(m, '__api_method__', '') == 'sendMessage' and getattr(m, 'chat_id', None) == 333]
+            self.assertTrue(any('Новая жалоба' in (m.text or '') for m in delivered))
         finally:
             await dp.fsm.close()
             await bot.session.close()

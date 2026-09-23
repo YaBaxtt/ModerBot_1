@@ -150,3 +150,33 @@ class ModerationResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Мут', result)
         self.assertIn('автоматика бота', result)
         self.assertIn('@spam_name', result)
+
+    async def test_history_reply_to_own_message_does_not_select_the_moderator(self):
+        moderator = telegram_user(10, 'Moderator', 'moderator_name')
+        message = SimpleNamespace(
+            from_user=moderator,
+            reply_to_message=SimpleNamespace(from_user=moderator),
+            chat=telegram_chat(),
+            text='/history',
+            answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member')))
+        config = SimpleNamespace(is_owner=lambda _: False)
+
+        async with self.factory() as session:
+            chat = Chat(telegram_id=message.chat.id, title=message.chat.title, username=message.chat.username)
+            db_moderator = User(telegram_id=moderator.id, first_name=moderator.first_name, username=moderator.username)
+            target = User(telegram_id=20, first_name='Spammer', username='spam_name')
+            session.add_all([chat, db_moderator, target])
+            await session.flush()
+            session.add_all([
+                ChatModerator(chat_id=chat.id, user_id=db_moderator.id, is_active=True),
+                ModerationAction(chat_id=chat.id, target_user_id=target.id, moderator_user_id=db_moderator.id, action=ModerationActionType.MUTE, reason='test'),
+            ])
+            await session.commit()
+            await history(message, bot, session, config)
+
+        result = message.answer.call_args.args[0]
+        self.assertIn('Группа: <b>Test group</b>', result)
+        self.assertIn('@spam_name', result)
+        self.assertNotIn('Пользователь: <a href="tg://user?id=10"', result)

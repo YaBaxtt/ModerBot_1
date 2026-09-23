@@ -182,7 +182,16 @@ async def history(message: Message, bot: Bot, session: AsyncSession, config: Set
     if not await allowed(message, bot, session, config): return
     arguments = message.text.split()[1:]
     target = None
-    if message.reply_to_message or arguments:
+    reply_user = message.reply_to_message.from_user if message.reply_to_message else None
+    # A common Telegram workflow is to reply to the bot's result card or to
+    # the moderator's own follow-up.  Neither is the punished user, so in that
+    # case show the group journal instead of a misleading empty personal one.
+    reply_is_result_or_self = bool(
+        reply_user
+        and not arguments
+        and (getattr(reply_user, 'is_bot', False) or reply_user.id == message.from_user.id)
+    )
+    if (message.reply_to_message and not reply_is_result_or_self) or arguments:
         target, _ = await target_from_command(message, session, arguments)
         if not target:
             await message.answer('Пользователь не найден. Ответьте на его сообщение либо укажите известный @username / ID.')
@@ -211,6 +220,6 @@ async def history(message: Message, bot: Bot, session: AsyncSession, config: Set
     text = (
         f'📋 <b>ИСТОРИЯ МОДЕРАЦИИ</b>\n━━━━━━━━━━━━\n\n{scope}\n\n'
         + ('\n\n'.join(entries) if entries else '<i>Действий пока нет.</i>')
-        + '\n\n<i>Показаны последние 10 действий. Для истории одного участника ответьте на его сообщение командой /history.</i>'
+        + '\n\n<i>Показаны последние 10 действий. Для одного участника ответьте на его сообщение или используйте /history @username.</i>'
     )
     await message.answer(text)
