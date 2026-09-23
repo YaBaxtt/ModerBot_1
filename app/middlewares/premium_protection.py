@@ -73,7 +73,11 @@ class PremiumProtectionMiddleware(BaseMiddleware):
             caller_id = getattr(message.from_user, 'id', 0) or getattr(message.sender_chat, 'id', 0)
             cooldown_key = (message.chat.id, caller_id)
             now = monotonic()
-            if now - self._sos_calls.get(cooldown_key, 0) >= 60:
+            last_call = self._sos_calls.get(cooldown_key)
+            # A newly started Linux container can have less than 60 seconds
+            # of monotonic uptime.  Treat a missing entry as the first call,
+            # otherwise the first @admin after every deploy is silently lost.
+            if last_call is None or now - last_call >= 60:
                 self._sos_calls[cooldown_key] = now
                 await self._notify_administrators(bot, message, text)
 

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -60,8 +60,11 @@ class PremiumProtectionTests(unittest.IsolatedAsyncioTestCase):
         event = self.message_event(text='@admin нужна помощь')
         middleware = PremiumProtectionMiddleware()
         async with self.factory() as session:
-            await middleware(handler, event, {'session': session, 'bot': self.bot, 'config': self.config})
-            await middleware(handler, event, {'session': session, 'bot': self.bot, 'config': self.config})
+            # Reproduce a freshly started container whose monotonic clock has
+            # not reached the 60-second cooldown duration yet.
+            with patch('app.middlewares.premium_protection.monotonic', side_effect=(5.0, 6.0)):
+                await middleware(handler, event, {'session': session, 'bot': self.bot, 'config': self.config})
+                await middleware(handler, event, {'session': session, 'bot': self.bot, 'config': self.config})
         self.bot.get_chat_administrators.assert_awaited_once_with(-1001)
         targets = [call.args[0] for call in self.bot.send_message.await_args_list]
         self.assertEqual(targets, [501, 502, -1001])
