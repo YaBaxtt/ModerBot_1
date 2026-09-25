@@ -17,7 +17,7 @@ from app.services.profile import level_for_points, level_progress
 from app.services.features import feature_states
 from app.services.premium import chat_has_pro
 from app.services.protections import GROUP_CONTROLS, protection_states
-from app.services.moderators import can_manage_chat, chat_accesses
+from app.services.moderators import can_moderate_chat, chat_accesses
 
 DEFAULT_RULES = "Соблюдайте уважение к участникам сообщества, не флудите и не публикуйте рекламу без согласования с администрацией."
 
@@ -75,7 +75,7 @@ async def private_main_markup(
         group_url=group_url,
         channel_url=channel_url,
         features=features,
-        has_group_settings=any(managed for _, managed in accesses),
+        has_group_settings=bool(accesses),
         has_moderator_access=bool(accesses),
     )
 
@@ -185,7 +185,7 @@ async def group_settings(callback: CallbackQuery, session: AsyncSession, bot: Bo
     available = []
     unavailable = 0
     for chat in chats:
-        if not await can_manage_chat(bot, chat, callback.from_user.id, config):
+        if not await can_moderate_chat(bot, session, chat, callback.from_user.id, config):
             continue
         try:
             bot_member = await bot.get_chat_member(chat.telegram_id, bot.id)
@@ -202,7 +202,7 @@ async def group_settings(callback: CallbackQuery, session: AsyncSession, bot: Bo
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='nav:private_main')])
     await callback.answer()
     text = '⚙️ <b>НАСТРОЙКИ ГРУПП</b>\n━━━━━━━━━━━━\n\n'
-    text += 'Выберите группу, которой вы владеете.' if available else 'Доступных групп пока нет.'
+    text += 'Выберите группу, которой вы владеете или где назначены модератором.' if available else 'Доступных групп пока нет.'
     if unavailable:
         text += f'\n\n⚠️ Недоступных или удалённых групп скрыто: <b>{unavailable}</b>.'
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -217,8 +217,8 @@ async def group_settings_detail(callback: CallbackQuery, session: AsyncSession, 
     chat = await session.get(Chat, chat_id)
     if not chat or not chat.is_active:
         await callback.answer('Группа недоступна', show_alert=True); return
-    if not await can_manage_chat(bot, chat, callback.from_user.id, config):
-        await callback.answer('Настройки доступны владельцу группы.', show_alert=True); return
+    if not await can_moderate_chat(bot, session, chat, callback.from_user.id, config):
+        await callback.answer('У вас нет доступа к настройкам этой группы.', show_alert=True); return
     try:
         bot_member = await bot.get_chat_member(chat.telegram_id, bot.id)
     except TelegramAPIError:

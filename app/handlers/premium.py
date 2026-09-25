@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.database.models import Chat, ChatPremiumAccess
 from app.keyboards.common import back_button
-from app.services.moderators import can_manage_chat
+from app.services.moderators import can_manage_chat, can_moderate_chat
 from app.services.premium import build_payload, chat_has_pro, parse_payload
 from app.services.users import upsert_user
 
@@ -28,6 +28,13 @@ async def purchasable_chat(session: AsyncSession, bot: Bot, config: Settings, ch
     return chat
 
 
+async def accessible_chat(session: AsyncSession, bot: Bot, config: Settings, chat_id: int, user_id: int) -> Chat | None:
+    chat = await session.get(Chat, chat_id)
+    if not chat or not chat.is_active or not await can_moderate_chat(bot, session, chat, user_id, config):
+        return None
+    return chat
+
+
 @router.callback_query(F.data.startswith('premium:info:'))
 async def premium_info(callback: CallbackQuery, session: AsyncSession, bot: Bot, config: Settings) -> None:
     try:
@@ -35,10 +42,11 @@ async def premium_info(callback: CallbackQuery, session: AsyncSession, bot: Bot,
     except (AttributeError, ValueError):
         await callback.answer('Некорректная группа', show_alert=True)
         return
-    chat = await purchasable_chat(session, bot, config, chat_id, callback.from_user.id)
+    chat = await accessible_chat(session, bot, config, chat_id, callback.from_user.id)
     if not chat:
-        await callback.answer('Покупка доступна только создателю этой группы.', show_alert=True)
+        await callback.answer('У вас нет доступа к этой группе.', show_alert=True)
         return
+    can_buy = await can_manage_chat(bot, chat, callback.from_user.id, config)
     active = await chat_has_pro(session, chat.id, callback.from_user.id, config)
     if active:
         text = f'💎 <b>PRO УЖЕ АКТИВЕН</b>\n━━━━━━━━━━━━\n\nГруппа: <b>{escape(chat.title)}</b>\nСрок: <b>навсегда</b>\n\nВсе текущие и будущие PRO-функции этой группы доступны без доплат.'
@@ -60,10 +68,13 @@ async def premium_info(callback: CallbackQuery, session: AsyncSession, bot: Bot,
 ⚙️ Все будущие PRO-функции без доплаты</blockquote>
 
 Покупка закрепляется за этой группой и не является подпиской.'''
-        markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f'⭐ Купить навсегда · {config.premium_price_stars} XTR', callback_data=f'premium:buy:{chat.id}', style=ButtonStyle.SUCCESS)],
-            [InlineKeyboardButton(text='⬅️ Назад', callback_data=f'menu:group_settings:{chat.id}')],
-        ])
+        rows = []
+        if can_buy:
+            rows.append([InlineKeyboardButton(text=f'⭐ Купить навсегда · {config.premium_price_stars} XTR', callback_data=f'premium:buy:{chat.id}', style=ButtonStyle.SUCCESS)])
+        else:
+            text += '\n\n<i>Активировать PRO может создатель группы.</i>'
+        rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=f'menu:group_settings:{chat.id}')])
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.answer()
     await callback.message.edit_text(text, reply_markup=markup)
 

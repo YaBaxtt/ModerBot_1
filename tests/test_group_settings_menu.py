@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import GetChatMember
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, Chat, MemberEvent, ModerationAction, ModerationActionType, User, Warning
+from app.database.models import Base, Chat, ChatModerator, MemberEvent, ModerationAction, ModerationActionType, User, Warning
 from app.handlers.common import group_settings, group_settings_detail
 from app.handlers.group_controls import group_statistics
 
@@ -72,6 +72,35 @@ class GroupSettingsMenuTests(unittest.IsolatedAsyncioTestCase):
         rows = callback.message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
         self.assertIn('ГРУППА НЕДОСТУПНА', text)
         self.assertEqual(rows[-1][0].callback_data, 'menu:group_settings')
+
+    async def test_assigned_moderator_can_open_group_settings(self):
+        async with self.factory() as session:
+            moderator = User(telegram_id=20, first_name='Moderator')
+            session.add(moderator)
+            await session.flush()
+            session.add(ChatModerator(chat_id=self.good_id, user_id=moderator.id, granted_by_user_id=None))
+            await session.commit()
+
+        async def get_member(chat_id, user_id):
+            if user_id == 999:
+                return SimpleNamespace(
+                    status='administrator', can_delete_messages=True,
+                    can_restrict_members=True, can_pin_messages=True,
+                )
+            return SimpleNamespace(status='member')
+
+        bot = SimpleNamespace(id=999, get_chat_member=AsyncMock(side_effect=get_member))
+        callback = SimpleNamespace(
+            data=f'menu:group_settings:{self.good_id}',
+            from_user=SimpleNamespace(id=20), answer=AsyncMock(),
+            message=SimpleNamespace(edit_text=AsyncMock()),
+        )
+        async with self.factory() as session:
+            await group_settings_detail(callback, session, bot, self.config)
+        text = callback.message.edit_text.call_args.args[0]
+        self.assertIn('ПАРАМЕТРЫ ГРУППЫ', text)
+        rows = callback.message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
+        self.assertTrue(any(button.callback_data == f'groupcfg:view:captcha:{self.good_id}' for row in rows for button in row))
 
     async def test_group_statistics_separates_periods_and_moderation(self):
         now = datetime.now(timezone.utc)

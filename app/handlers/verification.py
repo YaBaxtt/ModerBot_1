@@ -17,7 +17,7 @@ from app.config import Settings
 from app.database.models import Chat, JoinVerification, User
 from app.services.text import display_name, user_label
 from app.services.users import upsert_chat, upsert_user
-from app.services.verification import get_question, random_question
+from app.services.verification import random_question
 from app.keyboards.common import back_button
 from app.services.features import feature_enabled
 from app.services.protections import protection_states
@@ -176,16 +176,17 @@ async def new_member(event: ChatMemberUpdated, bot: Bot, session: AsyncSession, 
             log.warning("Could not notify chat about missing verification permission", exc_info=True)
         return
 
-    question = random_question()
+    question = await random_question(session)
     expires_at = datetime.utcnow() + timedelta(seconds=config.join_verification_timeout_seconds)
     challenge = await session.scalar(select(JoinVerification).where(JoinVerification.chat_id == chat.id, JoinVerification.user_id == user.id))
     if challenge:
         challenge.question_key = question.key
+        challenge.correct_index = question.correct_index
         challenge.expires_at = expires_at
         challenge.is_verified = False
         challenge.completed_at = None
     else:
-        challenge = JoinVerification(chat_id=chat.id, user_id=user.id, question_key=question.key, expires_at=expires_at)
+        challenge = JoinVerification(chat_id=chat.id, user_id=user.id, question_key=question.key, correct_index=question.correct_index, expires_at=expires_at)
         session.add(challenge)
         await session.flush()
 
@@ -226,8 +227,7 @@ async def answer_verification(callback: CallbackQuery, bot: Bot, session: AsyncS
                 challenge.completed_at = datetime.utcnow()
                 await session.commit()
         return
-    question = get_question(question_key)
-    if not question or question.key != challenge.question_key or selected != question.correct_index:
+    if question_key != challenge.question_key or challenge.correct_index is None or selected != challenge.correct_index:
         await callback.answer("Неверно. Попробуйте ещё раз.", show_alert=True)
         return
     chat = await session.get(Chat, challenge.chat_id)

@@ -1,5 +1,4 @@
 import asyncio
-import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -32,7 +31,7 @@ from app.handlers.private_reports import target_is_protected
 from app.handlers.admin import MenuLinkForm, menu_link_save
 from app.handlers.common import menu_links
 from app.handlers.fallbacks import stale_private_button
-from app.services.verification import QUESTIONS, load_questions
+from app.services.verification import generate_math_question
 
 
 class RecordingSession(BaseSession):
@@ -431,16 +430,10 @@ class PrivateWorkflows(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(Setting, 'announcement_pin:-100')).value, '30')
         bot.unpin_chat_message.assert_not_called()
 
-    async def test_question_file_validation_and_callback_mapping(self):
-        self.assertEqual(len(load_questions()), 15)
-        for question in QUESTIONS:
-            buttons = question_keyboard(1, question.key, question.options)
-            for row in buttons.inline_keyboard:
-                for button in row:
-                    index = int(button.callback_data.rsplit(':', 1)[1])
-                    self.assertEqual(button.text, question.options[index])
-        path = Path(self.tmp.name) / 'bad.json'
-        item = {'key': 'duplicate', 'text': 'Question?', 'options': ['a', 'b', 'c', 'd'], 'correct_index': 0}
-        path.write_text(json.dumps([item, item]), encoding='utf-8')
-        with self.assertRaisesRegex(ValueError, 'уникальным'):
-            load_questions(path)
+    async def test_generated_question_callback_mapping(self):
+        question = generate_math_question()
+        buttons = question_keyboard(1, question.key, question.options)
+        for row in buttons.inline_keyboard:
+            for button in row:
+                index = int(button.callback_data.rsplit(':', 1)[1])
+                self.assertEqual(button.text, question.options[index])

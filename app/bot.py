@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database.session import create_session_factory
-from app.handlers import activity_router, admin_router, advertising_router, broadcasts_router, common_router, group_controls_router, leaderboard_router, moderation_router, premium_router, reports_router, shop_router, subscriptions_router, verification_router
+from app.handlers import activity_router, admin_router, advertising_router, broadcasts_router, captcha_admin_router, common_router, group_controls_router, leaderboard_router, moderation_router, premium_router, reports_router, shop_router, subscriptions_router, verification_router
 from app.middlewares.database import DatabaseMiddleware
 from app.middlewares.navigation import NavigationMiddleware
 from app.middlewares.private_navigation import PrivateNavigationMiddleware
@@ -69,7 +69,7 @@ async def main() -> None:
                 logging.getLogger(__name__).exception("Could not answer failed callback")
         return True
     # Commands first; activity router catches only non-command group messages.
-    dispatcher.include_routers(premium_router, subscriptions_router, group_controls_router, verification_router, rewards_router, common_router, moderator_panel_router, moderation_router, private_reports_router, reports_router, leaderboard_router, shop_router, advertising_router, broadcasts_router, announcements_router, admin_router, activity_router, fallbacks_router)
+    dispatcher.include_routers(premium_router, subscriptions_router, group_controls_router, verification_router, rewards_router, common_router, moderator_panel_router, moderation_router, private_reports_router, reports_router, leaderboard_router, shop_router, advertising_router, broadcasts_router, announcements_router, captcha_admin_router, admin_router, activity_router, fallbacks_router)
     health_runner = await start_health_server(config.port)
     await bot.delete_webhook(drop_pending_updates=False)
     logging.info("Starting ModerBot")

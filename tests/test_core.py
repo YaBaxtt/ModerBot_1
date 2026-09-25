@@ -36,7 +36,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([button.text for button in rows[3]], ['📢 Рассылка', '📌 Объявление'])
         self.assertEqual([button.text for button in rows[4]], ['🛍 Добавить товар', '⚙️ Правила'])
         self.assertEqual([button.text for button in rows[5]], ['🔗 Ссылки меню', '📋 Команды'])
-        self.assertEqual([button.text for button in rows[6]], ['📢 Обязательная подписка'])
+        self.assertEqual([button.text for button in rows[6]], ['🧠 Капча', '📢 Подписка'])
 
     def test_owner_identity_uses_telegram_id_even_for_database_user(self):
         db_user = type('DbUser', (), {'id': 7, 'telegram_id': 123456, 'first_name': 'Name', 'username': None})()

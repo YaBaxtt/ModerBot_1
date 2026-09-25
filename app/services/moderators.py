@@ -49,10 +49,9 @@ async def chat_accesses(
 ) -> list[tuple[Chat, bool]]:
     """Return active chats the user owns or moderates.
 
-    The boolean is true only for users allowed to change group settings.  This
-    single source of truth is also used to decide which private-menu buttons
-    are visible, so an ordinary user never receives dead administration
-    controls.
+    The boolean is true only for the creator/owner, who may delegate access.
+    Every returned user may use the group's protection settings; an ordinary
+    user never receives dead administration controls.
     """
     chats = (
         await session.scalars(

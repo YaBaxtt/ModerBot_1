@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.database.models import Chat, ChatProtectionSetting, DailyActivity, JoinVerification, MemberEvent, ModerationAction, ModerationActionType, Warning
 from app.keyboards.common import back_button
-from app.services.moderators import can_manage_chat
+from app.services.moderators import can_moderate_chat
 from app.services.premium import chat_has_pro
 from app.services.protections import PROTECTION_BY_KEY, forbidden_words, protection_action, protection_states, set_forbidden_words, set_protection, set_protection_action
 
@@ -34,7 +34,7 @@ class GroupRulesForm(StatesGroup):
 
 async def managed_chat(session: AsyncSession, bot: Bot, config: Settings, chat_id: int, user_id: int) -> Chat | None:
     chat = await session.get(Chat, chat_id)
-    if not chat or not chat.is_active or not await can_manage_chat(bot, chat, user_id, config):
+    if not chat or not chat.is_active or not await can_moderate_chat(bot, session, chat, user_id, config):
         return None
     return chat
 

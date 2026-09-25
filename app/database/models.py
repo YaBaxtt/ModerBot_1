@@ -325,6 +325,16 @@ class Setting(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class CaptchaQuestion(Base, TimestampMixin):
+    __tablename__ = "captcha_questions"
+    id: Mapped[int] = mapped_column(InternalId, primary_key=True, autoincrement=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    correct_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+
 class JoinVerification(Base, TimestampMixin):
     __tablename__ = "join_verifications"
     __table_args__ = (UniqueConstraint("chat_id", "user_id", name="uq_join_verification"),)
@@ -332,6 +342,7 @@ class JoinVerification(Base, TimestampMixin):
     chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     question_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    correct_index: Mapped[int | None] = mapped_column(Integer)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

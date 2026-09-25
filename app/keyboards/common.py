@@ -42,7 +42,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="broadcast:start"), InlineKeyboardButton(text="📌 Объявление", callback_data="announce:start")],
         [InlineKeyboardButton(text="🛍 Добавить товар", callback_data="admin:shop_add"), InlineKeyboardButton(text="⚙️ Правила", callback_data="admin:rules")],
         [InlineKeyboardButton(text="🔗 Ссылки меню", callback_data="admin:links"), InlineKeyboardButton(text="📋 Команды", callback_data="admin:commands")],
-        [InlineKeyboardButton(text="📢 Обязательная подписка", callback_data="subcfg:global")],
+        [InlineKeyboardButton(text="🧠 Капча", callback_data="admin:captcha"), InlineKeyboardButton(text="📢 Подписка", callback_data="subcfg:global")],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="nav:private_main")],
     ])
 
