@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, Chat, ModerationAction, ModerationActionType, User
-from app.handlers.moderator_panel import moderator_detail, remember_bot_chat
+from app.database.models import Base, Chat, ChatModerator, ModerationAction, ModerationActionType, User
+from app.handlers.moderator_panel import grant_candidate, moderator_detail, remember_bot_chat
 from app.services.moderators import can_manage_chat, can_moderate_chat, revoke_moderator, set_moderator
 
 
@@ -65,6 +65,29 @@ class ModeratorPanelTests(unittest.IsolatedAsyncioTestCase):
             await remember_bot_chat(SimpleNamespace(chat=telegram_chat, new_chat_member=SimpleNamespace(status='left')), session)
             await session.commit()
             self.assertFalse(chat.is_active)
+
+    async def test_assignment_notification_opens_group_settings_immediately(self):
+        bot = self.bot()
+        config = SimpleNamespace(is_owner=lambda _: False)
+        callback = SimpleNamespace(
+            from_user=SimpleNamespace(id=10, username='owner', first_name='Owner', last_name=None),
+            answer=AsyncMock(),
+            message=SimpleNamespace(edit_text=AsyncMock()),
+        )
+        state = SimpleNamespace(clear=AsyncMock())
+        async with self.factory() as session:
+            await grant_candidate(callback, session, bot, config, self.chat.id, self.moderator, state)
+            assignment = await session.scalar(select(ChatModerator).where(
+                ChatModerator.chat_id == self.chat.id,
+                ChatModerator.user_id == self.moderator.id,
+                ChatModerator.is_active.is_(True),
+            ))
+            self.assertIsNotNone(assignment)
+        notification = bot.send_message.call_args
+        self.assertEqual(notification.args[0], self.moderator.telegram_id)
+        buttons = notification.kwargs['reply_markup'].inline_keyboard
+        self.assertEqual(buttons[0][0].callback_data, f'menu:group_settings:{self.chat.id}')
+        self.assertEqual(buttons[1][0].callback_data, f'moder:chat:{self.chat.id}')
 
     async def test_moderator_card_shows_counts_and_only_last_five_actions(self):
         bot = self.bot()

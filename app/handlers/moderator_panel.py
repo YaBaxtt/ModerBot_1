@@ -236,7 +236,14 @@ async def grant_candidate(event: CallbackQuery | Message, session: AsyncSession,
     else:
         await event.answer(f'✅ {user_label(user)} назначен модератором группы <b>{escape(chat.title)}</b>.', reply_markup=back_button(f'moder:chat:{chat.id}'))
     try:
-        await bot.send_message(user.telegram_id, f'🛡 Вас назначили доверенным модератором группы <b>{escape(chat.title)}</b>. Откройте /moder, чтобы посмотреть доступ и команды.', reply_markup=back_button('moder:home'))
+        await bot.send_message(
+            user.telegram_id,
+            f'🛡 Вас назначили доверенным модератором группы <b>{escape(chat.title)}</b>.\n\nТеперь вам доступны защита, правила, статистика и другие настройки этой группы. Назначать или удалять модераторов по-прежнему может только создатель группы.',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text='⚙️ Настройки группы', callback_data=f'menu:group_settings:{chat.id}', style=ButtonStyle.SUCCESS)],
+                [InlineKeyboardButton(text='🛡 Модераторская', callback_data=f'moder:chat:{chat.id}')],
+            ]),
+        )
     except TelegramAPIError:
         log.info('Could not notify moderator %s about assignment', user.telegram_id)
 
