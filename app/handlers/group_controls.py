@@ -47,10 +47,14 @@ async def render_protection(message: Message, session: AsyncSession, chat: Chat,
     if key == 'forbidden_words':
         words = await forbidden_words(session, chat.id)
         details = '\n\n<b>Список:</b> ' + (', '.join(escape(word) for word in words[:30]) if words else '<i>пока пуст</i>')
-    action = await protection_action(session, chat.id, key) if key in {'forbidden_words', 'porn_filter', 'media_filter'} else None
+    action = await protection_action(session, chat.id, key) if key in {'antispam', 'forbidden_words', 'porn_filter', 'media_filter'} else None
     if action:
         action_names = {'delete': 'удалить', 'warn': 'варн', 'kick': 'кик', 'mute': 'мут на 1 час', 'ban': 'бан'}
         details += f'\n<b>Наказание:</b> {action_names[action]}'
+    if key == 'antispam':
+        details += '\n\n<blockquote>⚡ 4 любых сообщения за 1 секунду\n🔁 4 одинаковых сообщения, стикера или GIF за 5 секунд</blockquote>'
+        if action == 'warn':
+            details += '\n<i>Третий активный варн автоматически превращается в бан.</i>'
     text = f'{item.title}\n━━━━━━━━━━━━\n\n💬 Группа: <b>{escape(chat.title)}</b>\n\n{item.description}\n\nСтатус: {"✅ <b>включено</b>" if enabled else "❌ <b>выключено</b>"}{details}'
     if note:
         text += f'\n\n{note}'
@@ -59,9 +63,11 @@ async def render_protection(message: Message, session: AsyncSession, chat: Chat,
         InlineKeyboardButton(text='❌ Выключить', callback_data=f'groupcfg:toggle:{key}:{chat.id}:0', style=ButtonStyle.SUCCESS if not enabled else None),
     ]]
     if action:
-        action_names = [('delete', '🗑 Удалить'), ('warn', '⚠️ Варн'), ('kick', '🚪 Кик'), ('mute', '🔇 Мут 1ч'), ('ban', '🚫 Бан')]
+        action_names = [('warn', '⚠️ Дать варн'), ('mute', '🔇 Дать мут'), ('ban', '🚫 Дать бан')] if key == 'antispam' else [('delete', '🗑 Удалить'), ('warn', '⚠️ Варн'), ('kick', '🚪 Кик'), ('mute', '🔇 Мут 1ч'), ('ban', '🚫 Бан')]
         buttons = [InlineKeyboardButton(text=label, callback_data=f'groupcfg:action:{key}:{chat.id}:{value}', style=ButtonStyle.SUCCESS if value == action else None) for value, label in action_names]
-        rows.extend([buttons[:3], buttons[3:]])
+        rows.append(buttons[:3])
+        if buttons[3:]:
+            rows.append(buttons[3:])
     if key == 'forbidden_words':
         rows.append([InlineKeyboardButton(text='✏️ Изменить список слов', callback_data=f'groupcfg:words:{chat.id}')])
     rows.append([InlineKeyboardButton(text='⬅️ К настройкам', callback_data=f'menu:group_settings:{chat.id}')])
@@ -116,6 +122,10 @@ async def protection_toggle(callback: CallbackQuery, session: AsyncSession, bot:
             if await release_challenge(bot, session, challenge):
                 released += 1
         note = f'🔓 Ожидавших проверку освобождено: <b>{released}</b>.' if pending else None
+    if key == 'antispam' and not enabled:
+        from app.handlers.activity import guard
+        guard.reset_chat(chat.telegram_id)
+        note = '🧹 Незавершённые счётчики флуда очищены.'
     await session.commit()
     await callback.answer('Включено' if enabled else 'Выключено')
     await render_protection(callback.message, session, chat, key, note=note)

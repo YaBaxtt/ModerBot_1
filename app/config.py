@@ -13,9 +13,12 @@ class Settings(BaseSettings):
     database_url: str
     owner_ids: tuple[int, ...]
     log_level: str = "INFO"
-    antispam_min_interval_seconds: float = 1.0
-    antispam_repeat_limit: int = 5
-    antispam_repeat_window_seconds: int = 120
+    # New variable names intentionally ignore legacy Railway values that used
+    # the old "one message per second / five in two minutes" algorithm.
+    antispam_burst_limit: int = Field(default=4, ge=2, le=20)
+    antispam_burst_window_seconds: float = Field(default=1.0, gt=0, le=60)
+    antispam_identical_limit: int = Field(default=4, ge=2, le=20)
+    antispam_identical_window_seconds: float = Field(default=5.0, gt=0, le=300)
     antispam_mute_duration: str = "1h"
     join_verification_timeout_seconds: int = 60
     premium_price_stars: int = Field(default=50, ge=1, le=10000)

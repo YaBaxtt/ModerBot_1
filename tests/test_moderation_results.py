@@ -11,6 +11,7 @@ from app.database.models import Base, Chat, ChatModerator, ModerationAction, Mod
 from app.handlers.activity import activity
 from app.handlers.moderation import history, warn
 from app.services.antispam import SpamDecision
+from app.services.protections import set_protection_action
 
 
 def telegram_user(user_id: int, first_name: str, username: str):
@@ -98,25 +99,86 @@ class ModerationResultTests(unittest.IsolatedAsyncioTestCase):
         )
         config = SimpleNamespace(
             is_owner=lambda _: False,
-            antispam_min_interval_seconds=1,
-            antispam_repeat_limit=5,
-            antispam_repeat_window_seconds=120,
+            antispam_burst_limit=4,
+            antispam_burst_window_seconds=1,
+            antispam_identical_limit=4,
+            antispam_identical_window_seconds=5,
             antispam_mute_duration='1h',
         )
 
         async with self.factory() as session:
-            with patch('app.handlers.activity.guard.inspect', return_value=SpamDecision(delete=True, mute=True)):
+            with patch('app.handlers.activity.guard.inspect', return_value=SpamDecision(delete=True, punish=True, reason='4 одинаковых сообщения за 5 секунд', message_ids=(52, 53, 54, 55))):
                 await activity(message, session, bot, config)
             await session.commit()
 
-        bot.delete_message.assert_awaited_once_with(message.chat.id, message.message_id)
+        self.assertEqual(bot.delete_message.await_count, 4)
         bot.restrict_chat_member.assert_awaited_once()
         result = message.answer.call_args.args[0]
-        self.assertIn('АВТОМУТ ЗА СПАМ', result)
+        self.assertIn('АНТИСПАМ СРАБОТАЛ', result)
         self.assertIn(f'tg://user?id={target.id}', result)
         self.assertIn('@flood_name', result)
         self.assertIn(f'<code>{target.id}</code>', result)
-        self.assertIn('5 одинаковых сообщений', result)
+        self.assertIn('4 одинаковых сообщения за 5 секунд', result)
+        self.assertIn('мут на 1h', result)
+
+    async def test_antispam_selected_ban_is_applied(self):
+        target = telegram_user(31, 'Flooder', 'ban_me')
+        message = SimpleNamespace(
+            from_user=target, chat=telegram_chat(-2002), text=None, caption=None,
+            sticker=SimpleNamespace(file_unique_id='sticker'), message_id=70, answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member')),
+            delete_message=AsyncMock(), ban_chat_member=AsyncMock(), restrict_chat_member=AsyncMock(),
+        )
+        config = SimpleNamespace(
+            is_owner=lambda _: False, antispam_burst_limit=4, antispam_burst_window_seconds=1,
+            antispam_identical_limit=4, antispam_identical_window_seconds=5, antispam_mute_duration='1h',
+        )
+        async with self.factory() as session:
+            chat = Chat(telegram_id=-2002, title='Test group', username='test_group')
+            session.add(chat)
+            await session.flush()
+            await set_protection_action(session, chat.id, 'antispam', 'ban')
+            await session.commit()
+            with patch('app.handlers.activity.guard.inspect', return_value=SpamDecision(delete=True, punish=True, reason='4 сообщения за 1 секунду', message_ids=(70,))):
+                await activity(message, session, bot, config)
+            await session.commit()
+            action = await session.scalar(select(ModerationAction).where(ModerationAction.action == ModerationActionType.BAN))
+        bot.ban_chat_member.assert_awaited_once_with(-2002, target.id)
+        bot.restrict_chat_member.assert_not_awaited()
+        self.assertEqual(action.reason, 'Автоматически: 4 сообщения за 1 секунду')
+
+    async def test_antispam_selected_warning_is_applied(self):
+        target = telegram_user(32, 'Flooder', 'warn_me')
+        message = SimpleNamespace(
+            from_user=target, chat=telegram_chat(-2003), text='spam', caption=None,
+            message_id=80, answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member')),
+            delete_message=AsyncMock(), ban_chat_member=AsyncMock(), restrict_chat_member=AsyncMock(),
+        )
+        config = SimpleNamespace(
+            is_owner=lambda _: False, antispam_burst_limit=4, antispam_burst_window_seconds=1,
+            antispam_identical_limit=4, antispam_identical_window_seconds=5, antispam_mute_duration='1h',
+        )
+        async with self.factory() as session:
+            chat = Chat(telegram_id=-2003, title='Test group', username='test_group')
+            session.add(chat)
+            await session.flush()
+            await set_protection_action(session, chat.id, 'antispam', 'warn')
+            await session.commit()
+            with patch('app.handlers.activity.guard.inspect', return_value=SpamDecision(delete=True, punish=True, reason='4 одинаковых сообщения за 5 секунд', message_ids=(80,))):
+                await activity(message, session, bot, config)
+            await session.commit()
+            warning_count = await session.scalar(select(func.count(Warning.id)).where(Warning.target_user_id.is_not(None)))
+            action = await session.scalar(select(ModerationAction).where(ModerationAction.action == ModerationActionType.WARN))
+        self.assertEqual(warning_count, 1)
+        self.assertEqual(action.reason, 'Автоматически: 4 одинаковых сообщения за 5 секунд')
+        bot.ban_chat_member.assert_not_awaited()
+        bot.restrict_chat_member.assert_not_awaited()
+        self.assertIn('предупреждение 1/3', message.answer.call_args.args[0])
 
     async def test_history_without_reply_shows_requesting_moderators_actions_only(self):
         moderator = telegram_user(10, 'Moderator', 'moderator_name')

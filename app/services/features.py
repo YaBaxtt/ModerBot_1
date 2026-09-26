@@ -16,7 +16,7 @@ class Feature:
 
 FEATURES = (
     Feature('verification', 'Проверка новичков', 'Мут и тест при входе'),
-    Feature('antispam', 'Авто-антиспам', 'Удаление флуда и автоматический мут'),
+    Feature('antispam', 'Авто-антиспам', 'Фильтрация флуда с выбранным наказанием'),
     Feature('moderation', 'Команды модерации', 'Ban, mute, warn и история'),
     Feature('command_cleanup', 'Очистка /команд', 'Удаление команд пользователей из групп'),
     Feature('member_tracking', 'Изменения профиля', 'Имя, username и аватар участников'),

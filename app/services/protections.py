@@ -19,7 +19,7 @@ class Protection:
 
 
 GROUP_CONTROLS = (
-    Protection('antispam', '🛡 Антиспам', 'Удаляет слишком частые и одинаковые сообщения.', premium=False, default_enabled=True),
+    Protection('antispam', '🛡 Антиспам', 'Ловит 4 сообщения за секунду или 4 одинаковых за 5 секунд. Учитывает текст, стикеры, GIF и другие медиа.', premium=False, default_enabled=True),
     Protection('captcha', '🧠 Капча', 'Проверяет новых участников перед доступом к сообщениям.', premium=False, default_enabled=True),
     Protection('welcome', '👋 Приветствие', 'Отправляет приветствие после успешной проверки.', premium=False, default_enabled=True),
     Protection('farewell', '🚪 Прощание', 'Сообщает, когда участник покидает группу.', premium=False),
@@ -34,6 +34,12 @@ GROUP_CONTROLS = (
 PROTECTIONS = tuple(item for item in GROUP_CONTROLS if item.premium)
 PROTECTION_BY_KEY = {item.key: item for item in GROUP_CONTROLS}
 MODERATION_ACTIONS = {'delete', 'warn', 'kick', 'mute', 'ban'}
+PROTECTION_ACTIONS = {
+    'antispam': {'warn', 'mute', 'ban'},
+    'forbidden_words': MODERATION_ACTIONS,
+    'porn_filter': MODERATION_ACTIONS,
+    'media_filter': MODERATION_ACTIONS,
+}
 
 
 async def protection_rows(session: AsyncSession, chat_id: int) -> dict[str, ChatProtectionSetting]:
@@ -78,13 +84,13 @@ async def set_forbidden_words(session: AsyncSession, chat_id: int, words: list[s
 
 
 async def protection_action(session: AsyncSession, chat_id: int, key: str) -> str:
-    defaults = {'forbidden_words': 'ban', 'porn_filter': 'ban', 'media_filter': 'delete'}
+    defaults = {'antispam': 'mute', 'forbidden_words': 'ban', 'porn_filter': 'ban', 'media_filter': 'delete'}
     row = await session.scalar(select(ChatProtectionSetting).where(ChatProtectionSetting.chat_id == chat_id, ChatProtectionSetting.key == key))
     if row and row.value:
         try:
             saved = json.loads(row.value)
             action = saved.get('action') if isinstance(saved, dict) else None
-            if action in MODERATION_ACTIONS:
+            if action in PROTECTION_ACTIONS.get(key, set()):
                 return action
         except (TypeError, ValueError):
             pass
@@ -92,7 +98,7 @@ async def protection_action(session: AsyncSession, chat_id: int, key: str) -> st
 
 
 async def set_protection_action(session: AsyncSession, chat_id: int, key: str, action: str) -> ChatProtectionSetting:
-    if action not in MODERATION_ACTIONS or key not in {'forbidden_words', 'porn_filter', 'media_filter'}:
+    if action not in PROTECTION_ACTIONS.get(key, set()):
         raise KeyError((key, action))
     row = await set_protection(session, chat_id, key, (await protection_states(session, chat_id))[key])
     saved: dict = {}

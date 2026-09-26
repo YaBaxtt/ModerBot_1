@@ -9,9 +9,10 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import GetChatMember
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, Chat, ChatModerator, MemberEvent, ModerationAction, ModerationActionType, User, Warning
+from app.database.models import Base, Chat, ChatModerator, ChatProtectionSetting, MemberEvent, ModerationAction, ModerationActionType, User, Warning
 from app.handlers.common import group_settings, group_settings_detail
-from app.handlers.group_controls import group_statistics
+from app.handlers.group_controls import group_statistics, render_protection
+from app.services.protections import set_protection_action
 
 
 def telegram_error(chat_id: int) -> TelegramBadRequest:
@@ -124,3 +125,34 @@ class GroupSettingsMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('7 дней: <b>+1</b> / <b>−1</b>', text)
         self.assertIn('Банов: <b>1</b>', text)
         self.assertIn('Активных предупреждений: <b>1</b>', text)
+
+    async def test_antispam_menu_has_exactly_three_punishments(self):
+        target = SimpleNamespace(edit_text=AsyncMock())
+        async with self.factory() as session:
+            chat = await session.get(Chat, self.good_id)
+            await set_protection_action(session, chat.id, 'antispam', 'warn')
+            await session.commit()
+            await render_protection(target, session, chat, 'antispam')
+        text = target.edit_text.call_args.args[0]
+        rows = target.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
+        actions = [button for row in rows for button in row if button.callback_data and button.callback_data.startswith('groupcfg:action:antispam:')]
+        self.assertEqual([button.text for button in actions], ['⚠️ Дать варн', '🔇 Дать мут', '🚫 Дать бан'])
+        self.assertEqual(sum(button.style == 'success' for button in actions), 1)
+        self.assertIn('4 любых сообщения за 1 секунду', text)
+        self.assertIn('4 одинаковых сообщения, стикера или GIF за 5 секунд', text)
+
+    async def test_antispam_rejects_hidden_delete_action(self):
+        async with self.factory() as session:
+            with self.assertRaises(KeyError):
+                await set_protection_action(session, self.good_id, 'antispam', 'delete')
+
+    async def test_antispam_ignores_legacy_invalid_saved_action(self):
+        async with self.factory() as session:
+            row = ChatProtectionSetting(chat_id=self.good_id, key='antispam', enabled=True, value='{"action":"delete"}')
+            session.add(row)
+            await session.commit()
+            chat = await session.get(Chat, self.good_id)
+            target = SimpleNamespace(edit_text=AsyncMock())
+            await render_protection(target, session, chat, 'antispam')
+        text = target.edit_text.call_args.args[0]
+        self.assertIn('<b>Наказание:</b> мут на 1 час', text)

@@ -100,6 +100,18 @@ class CoreTests(unittest.TestCase):
         )
         self.assertEqual(settings.database_url, 'postgresql+asyncpg://user:pass@postgres.railway.internal:5432/railway')
 
+    def test_antispam_defaults_match_group_settings_description(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            bot_token='token',
+            database_url='sqlite+aiosqlite:///test.db',
+            owner_ids='1',
+        )
+        self.assertEqual(settings.antispam_burst_limit, 4)
+        self.assertEqual(settings.antispam_burst_window_seconds, 1)
+        self.assertEqual(settings.antispam_identical_limit, 4)
+        self.assertEqual(settings.antispam_identical_window_seconds, 5)
+
     def test_required_tables_exist(self) -> None:
         expected = {"users", "chats", "warnings", "moderation_actions", "reports", "advertising_requests", "shop_items", "shop_purchases", "daily_activity", "broadcasts", "required_subscriptions", "required_subscription_progress"}
         self.assertTrue(expected.issubset(Base.metadata.tables))
