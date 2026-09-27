@@ -9,16 +9,14 @@ def main_menu(
     group_url: str | None = None,
     channel_url: str | None = None,
     features: dict[str, bool] | None = None,
-    has_group_settings: bool = True,
     has_moderator_access: bool = True,
 ) -> InlineKeyboardMarkup:
     def label(text: str, key: str) -> str:
         return f'⛔ {text}' if features is not None and not features.get(key, True) else text
     rows = [
         [InlineKeyboardButton(text="➕ Добавить меня в группу ➕", url=f"https://t.me/{bot_username}?startgroup=true", style=ButtonStyle.SUCCESS) if bot_username else InlineKeyboardButton(text="➕ Добавить меня в группу ➕", callback_data="menu:add_bot", style=ButtonStyle.SUCCESS)],
+        [InlineKeyboardButton(text="⚙️ Настройки групп", callback_data="menu:group_settings", style=ButtonStyle.SUCCESS)],
     ]
-    if has_group_settings:
-        rows.append([InlineKeyboardButton(text="⚙️ Настройки группы", callback_data="menu:group_settings", style=ButtonStyle.SUCCESS)])
     rows.extend([
         [InlineKeyboardButton(text="👥 Группа", url=group_url) if group_url else InlineKeyboardButton(text="👥 Группа", callback_data="menu:group"), InlineKeyboardButton(text="📣 Канал", url=channel_url) if channel_url else InlineKeyboardButton(text="📣 Канал", callback_data="menu:channel")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="menu:profile"), InlineKeyboardButton(text="ℹ️ Информация", callback_data="menu:info")],

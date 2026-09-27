@@ -36,9 +36,10 @@ async def can_moderate_chat(bot, session: AsyncSession, chat: Chat, user_telegra
     assignment = await active_assignment(session, chat.id, user_telegram_id)
     if not assignment:
         return False
-    # A removed member must not keep remote moderation access.
+    # An explicit assignment remains usable during temporary Telegram API
+    # failures. A confirmed leave/ban still revokes remote access immediately.
     role = await telegram_role(bot, chat.telegram_id, user_telegram_id)
-    return role not in {None, 'left', 'kicked'}
+    return role not in {'left', 'kicked'}
 
 
 async def chat_accesses(
@@ -79,7 +80,7 @@ async def chat_accesses(
     for chat in chats:
         role = await telegram_role(bot, chat.telegram_id, user_telegram_id)
         managed = role == 'creator'
-        if managed or (chat.id in assigned_chat_ids and role not in {None, 'left', 'kicked'}):
+        if managed or (chat.id in assigned_chat_ids and role not in {'left', 'kicked'}):
             result.append((chat, managed))
     return result
 

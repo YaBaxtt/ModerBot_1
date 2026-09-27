@@ -17,7 +17,7 @@ class CoreTests(unittest.TestCase):
         markup = main_menu(bot_username='moder_bot', group_url='https://t.me/group', channel_url='https://t.me/channel')
         buttons = [button for row in markup.inline_keyboard for button in row]
         labels = {button.text for button in buttons}
-        self.assertTrue({'➕ Добавить меня в группу ➕', '⚙️ Настройки группы', '🛡 Модераторская', '👥 Группа', '📣 Канал', 'ℹ️ Информация'} <= labels)
+        self.assertTrue({'➕ Добавить меня в группу ➕', '⚙️ Настройки групп', '🛡 Модераторская', '👥 Группа', '📣 Канал', 'ℹ️ Информация'} <= labels)
         self.assertNotIn('🆘 Поддержка', labels)
         add = next(button for button in buttons if button.text == '➕ Добавить меня в группу ➕')
         self.assertEqual(add.url, 'https://t.me/moder_bot?startgroup=true')
@@ -66,18 +66,17 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(sum(button.style == 'success' for button in admin_buttons), 3)
         self.assertFalse(any(button.style in {'primary', 'danger'} for button in admin_buttons))
 
-    def test_group_controls_are_hidden_without_verified_access(self):
+    def test_group_settings_stay_visible_without_verified_access(self):
         buttons = [
             button
             for row in main_menu(
                 bot_username='moder_bot',
-                has_group_settings=False,
                 has_moderator_access=False,
             ).inline_keyboard
             for button in row
         ]
         callbacks = {button.callback_data for button in buttons if button.callback_data}
-        self.assertNotIn('menu:group_settings', callbacks)
+        self.assertIn('menu:group_settings', callbacks)
         self.assertNotIn('moder:home', callbacks)
         self.assertEqual(buttons[0].url, 'https://t.me/moder_bot?startgroup=true')
     def test_duration_parser(self) -> None:

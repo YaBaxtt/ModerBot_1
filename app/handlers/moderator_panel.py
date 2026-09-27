@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.database.models import Chat, ChatModerator, MemberProfileSnapshot, ModerationAction, User, UserChatStats
 from app.keyboards.common import back_button
-from app.services.moderators import active_assignment, can_manage_chat, chat_accesses, revoke_moderator, set_moderator, telegram_role
+from app.services.moderators import can_manage_chat, can_moderate_chat, chat_accesses, revoke_moderator, set_moderator, telegram_role
 from app.services.text import user_label
 from app.services.users import find_user, upsert_chat, upsert_user
 
@@ -65,18 +65,14 @@ async def authorize_chat(callback: CallbackQuery, session: AsyncSession, bot: Bo
     if not chat or not chat.is_active:
         await callback.answer('Группа недоступна', show_alert=True)
         return None
-    allowed = await can_manage_chat(bot, chat, callback.from_user.id, config) if manage else (
+    allowed = (
         await can_manage_chat(bot, chat, callback.from_user.id, config)
-        or bool(await active_assignment(session, chat.id, callback.from_user.id))
+        if manage else
+        await can_moderate_chat(bot, session, chat, callback.from_user.id, config)
     )
     if not allowed:
         await callback.answer('У вас нет доступа к этой группе.', show_alert=True)
         return None
-    if not manage and not await can_manage_chat(bot, chat, callback.from_user.id, config):
-        role = await telegram_role(bot, chat.telegram_id, callback.from_user.id)
-        if role in {None, 'left', 'kicked'}:
-            await callback.answer('Вы больше не состоите в этой группе.', show_alert=True)
-            return None
     return chat
 
 

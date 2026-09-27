@@ -45,7 +45,7 @@ class NavigationMiddleware(BaseMiddleware):
                     else:
                         # Safe fallback for isolated middleware use: do not expose
                         # administration buttons without a verified group access.
-                        markup = main_menu(has_group_settings=False, has_moderator_access=False)
+                        markup = main_menu(has_moderator_access=False)
                 await message.answer("Действие отменено.", reply_markup=markup)
                 return
             if command in {"/start", "/admin", "/moder", "/report", "/help", "/me", "/profile", "/shop", "/top", "/rules"} and own_command and state:

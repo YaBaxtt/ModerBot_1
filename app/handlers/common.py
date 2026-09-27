@@ -38,7 +38,7 @@ MAIN_MENU_TEXT = """👋 <b>ДОБРО ПОЖАЛОВАТЬ В NIK MODER BOT</b>
 📢 Рассылки и закреплённые объявления
 📣 Обязательная подписка и статистика рекламных ссылок</blockquote>
 
-➕ Добавьте меня в группу и выдайте необходимые права администратора. Администраторы групп получают настройки своих сообществ, а центральная админ-панель доступна только владельцам бота.
+➕ Добавьте меня в группу и выдайте необходимые права администратора. Владельцы групп и назначенные через бота модераторы получают настройки своих сообществ, а центральная админ-панель доступна только владельцам бота.
 
 <i>Выберите нужный раздел ниже.</i>"""
 
@@ -75,7 +75,6 @@ async def private_main_markup(
         group_url=group_url,
         channel_url=channel_url,
         features=features,
-        has_group_settings=bool(accesses),
         has_moderator_access=bool(accesses),
     )
 
@@ -123,7 +122,7 @@ async def add_bot(callback: CallbackQuery, bot: Bot) -> None:
     await callback.message.edit_text(
         '➕ <b>ДОБАВИТЬ БОТА В НОВУЮ ГРУППУ</b>\n\n'
         'Нажмите «Выбрать группу», если подключаете ещё одну группу. После добавления назначьте бота администратором.\n\n'
-        '<b>Бот уже в вашей группе?</b> Вернитесь назад и откройте «⚙️ Настройки группы». '
+        '<b>Бот уже в вашей группе?</b> Вернитесь назад и откройте «⚙️ Настройки групп». '
         'Простого присутствия в чате недостаточно: для антиспама и жалоб нужны права удаления сообщений, '
         'для мутов и проверки новичков — ограничение участников, для объявлений — закрепление сообщений.',
         reply_markup=markup,
@@ -181,12 +180,10 @@ async def community_link(callback: CallbackQuery, session: AsyncSession, config:
 
 @router.callback_query(F.data == 'menu:group_settings', F.message.chat.type == 'private')
 async def group_settings(callback: CallbackQuery, session: AsyncSession, bot: Bot, config: Settings) -> None:
-    chats = (await session.scalars(select(Chat).where(Chat.is_active.is_(True)).order_by(Chat.title).limit(100))).all()
-    available = []
+    accesses = await chat_accesses(session, bot, callback.from_user.id, config)
+    available: list[tuple[Chat, bool]] = []
     unavailable = 0
-    for chat in chats:
-        if not await can_moderate_chat(bot, session, chat, callback.from_user.id, config):
-            continue
+    for chat, managed in accesses:
         try:
             bot_member = await bot.get_chat_member(chat.telegram_id, bot.id)
         except TelegramAPIError:
@@ -196,13 +193,24 @@ async def group_settings(callback: CallbackQuery, session: AsyncSession, bot: Bo
             chat.is_active = False
             unavailable += 1
             continue
-        available.append(chat)
-    rows = [[InlineKeyboardButton(text=f'⚙️ {chat.title[:55]}', callback_data=f'menu:group_settings:{chat.id}')] for chat in available]
-    rows.append([InlineKeyboardButton(text='➕ Добавить новую группу', callback_data='menu:add_bot')])
+        available.append((chat, managed))
+    rows = [[InlineKeyboardButton(
+        text=f'{"👑" if managed else "🛡"} {chat.title[:55]}',
+        callback_data=f'menu:group_settings:{chat.id}',
+    )] for chat, managed in available]
+    rows.append([InlineKeyboardButton(
+        text='➕ Добавить ещё одну группу' if available else '➕ Добавить группу',
+        callback_data='menu:add_bot',
+        style=ButtonStyle.SUCCESS,
+    )])
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='nav:private_main')])
     await callback.answer()
     text = '⚙️ <b>НАСТРОЙКИ ГРУПП</b>\n━━━━━━━━━━━━\n\n'
-    text += 'Выберите группу, которой вы владеете или где назначены модератором.' if available else 'Доступных групп пока нет.'
+    text += (
+        'Выберите группу из списка.\n\n<blockquote>👑 — вы владелец группы\n🛡 — вас назначили модератором через бота</blockquote>'
+        if available else
+        'У вас пока нет добавленных групп. Нажмите кнопку ниже, выберите группу и назначьте бота администратором.'
+    )
     if unavailable:
         text += f'\n\n⚠️ Недоступных или удалённых групп скрыто: <b>{unavailable}</b>.'
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))

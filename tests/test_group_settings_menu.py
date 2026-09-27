@@ -60,9 +60,24 @@ class GroupSettingsMenuTests(unittest.IsolatedAsyncioTestCase):
         text = callback.message.edit_text.call_args.args[0]
         rows = callback.message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
         labels = [button.text for row in rows for button in row]
-        self.assertIn('⚙️ Working group', labels)
-        self.assertNotIn('⚙️ Old group', labels)
+        self.assertIn('👑 Working group', labels)
+        self.assertNotIn('👑 Old group', labels)
         self.assertIn('скрыто: <b>1</b>', text)
+
+    async def test_empty_settings_always_offer_adding_a_group(self):
+        config = SimpleNamespace(is_owner=lambda _: False, premium_price_stars=50)
+        bot = SimpleNamespace(id=999, get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member')))
+        callback = SimpleNamespace(
+            data='menu:group_settings', from_user=SimpleNamespace(id=404),
+            answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock()),
+        )
+        async with self.factory() as session:
+            await group_settings(callback, session, bot, config)
+        text = callback.message.edit_text.call_args.args[0]
+        rows = callback.message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
+        self.assertIn('У вас пока нет добавленных групп', text)
+        self.assertEqual(rows[0][0].text, '➕ Добавить группу')
+        self.assertEqual(rows[0][0].callback_data, 'menu:add_bot')
 
     async def test_failed_rights_check_opens_recovery_page_with_back_button(self):
         bot = SimpleNamespace(id=999, get_chat_member=AsyncMock(side_effect=telegram_error(-1002)))
@@ -102,6 +117,32 @@ class GroupSettingsMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('ПАРАМЕТРЫ ГРУППЫ', text)
         rows = callback.message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
         self.assertTrue(any(button.callback_data == f'groupcfg:view:captcha:{self.good_id}' for row in rows for button in row))
+
+    async def test_assigned_group_is_listed_when_member_check_temporarily_fails(self):
+        async with self.factory() as session:
+            moderator = User(telegram_id=20, first_name='Moderator')
+            session.add(moderator)
+            await session.flush()
+            session.add(ChatModerator(chat_id=self.good_id, user_id=moderator.id, granted_by_user_id=None))
+            await session.commit()
+
+        async def get_member(chat_id, user_id):
+            if user_id == 20:
+                raise telegram_error(chat_id)
+            return SimpleNamespace(status='administrator')
+
+        bot = SimpleNamespace(id=999, get_chat_member=AsyncMock(side_effect=get_member))
+        callback = SimpleNamespace(
+            data='menu:group_settings', from_user=SimpleNamespace(id=20),
+            answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock()),
+        )
+        config = SimpleNamespace(is_owner=lambda _: False, premium_price_stars=50)
+        async with self.factory() as session:
+            await group_settings(callback, session, bot, config)
+        rows = callback.message.edit_text.call_args.kwargs['reply_markup'].inline_keyboard
+        labels = [button.text for row in rows for button in row]
+        self.assertIn('🛡 Working group', labels)
+        self.assertIn('➕ Добавить ещё одну группу', labels)
 
     async def test_group_statistics_separates_periods_and_moderation(self):
         now = datetime.now(timezone.utc)
